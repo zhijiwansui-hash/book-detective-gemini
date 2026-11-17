@@ -247,4 +247,164 @@
 
     <div id="status" aria-live="polite"></div>
     <div id="notice" class="notice hidden"><span class="face">🕵️</span><span id="noticeText"></span></div>
-    <section
+    <section id="results"></section>
+  </div>
+
+  <!-- 방명록 화면 -->
+  <div id="guestView" class="wrap guest hidden">
+    <p class="soon">준비 중</p>
+    <button id="backBtn" class="btn-back" type="button">← 돌아가기</button>
+  </div>
+
+  <script>
+    const mainView = document.getElementById("mainView");
+    const guestView = document.getElementById("guestView");
+    const form = document.getElementById("searchForm");
+    const input = document.getElementById("keyword");
+    const searchBtn = document.getElementById("searchBtn");
+    const statusEl = document.getElementById("status");
+    const noticeEl = document.getElementById("notice");
+    const noticeText = document.getElementById("noticeText");
+    const resultsEl = document.getElementById("results");
+    const DEFAULT_NOTICE = "AI가 고른 책이에요. 실제로 있는 책인지 한 번 확인해 보세요.";
+
+    // ----- 화면 전환 (같은 페이지 안에서 바꿔 보여줌) -----
+    document.getElementById("guestBtn").addEventListener("click", () => {
+      mainView.classList.add("hidden");
+      guestView.classList.remove("hidden");
+      window.scrollTo(0, 0);
+    });
+    document.getElementById("backBtn").addEventListener("click", () => {
+      guestView.classList.add("hidden");
+      mainView.classList.remove("hidden");
+    });
+
+    // ----- 추천 키워드 -----
+    document.getElementById("chips").addEventListener("click", (e) => {
+      const chip = e.target.closest(".chip");
+      if (!chip || searchBtn.disabled) return;
+      input.value = chip.textContent;
+      if (form.requestSubmit) form.requestSubmit();
+      else form.dispatchEvent(new Event("submit", { cancelable: true }));
+    });
+
+    // ----- 도우미 -----
+    const PALETTE = [
+      ["#ffd6e0", "#f4a7bb"], ["#c8ebd6", "#8fd1ad"], ["#bfe3f5", "#85c5e6"],
+      ["#ffe9a8", "#f5cb5c"], ["#dcd0f5", "#b7a3e8"], ["#ffd9bd", "#f7b07c"]
+    ];
+    const EMOJIS = ["🐻", "🐰", "🦊", "🐸", "🐧", "🦉", "🐘", "🐱"];
+
+    function makeEl(tag, className, text) {
+      const el = document.createElement(tag);
+      if (className) el.className = className;
+      if (text !== undefined) el.textContent = text;
+      return el;
+    }
+
+    function setStatus(msg, isError, spinning) {
+      statusEl.textContent = "";
+      if (spinning) statusEl.appendChild(makeEl("span", "spin", "🔍"));
+      if (msg) statusEl.appendChild(document.createTextNode((spinning ? " " : "") + msg));
+      statusEl.classList.toggle("error", !!isError);
+    }
+
+    function showSkeleton() {
+      resultsEl.innerHTML = "";
+      for (let i = 0; i < 3; i++) resultsEl.appendChild(makeEl("div", "skel"));
+    }
+
+    // 표지: 이미지 주소가 있으면 이미지, 없거나 깨지면 직접 그린 표지
+    function makeGeneratedCover(book, i) {
+      const cover = makeEl("div", "cover gen");
+      const spine = makeEl("span", "spine");
+      spine.style.background = PALETTE[i % PALETTE.length][1];
+      cover.appendChild(spine);
+      cover.appendChild(makeEl("div", "emoji", EMOJIS[i % EMOJIS.length]));
+      cover.appendChild(makeEl("div", "t", book.title || "그림책"));
+      return cover;
+    }
+
+    function makeCover(book, i) {
+      if (book.cover && /^https?:\/\//i.test(book.cover)) {
+        const cover = makeEl("div", "cover");
+        const img = document.createElement("img");
+        img.alt = (book.title || "그림책") + " 표지";
+        img.loading = "lazy";
+        img.referrerPolicy = "no-referrer";
+        img.onerror = () => cover.replaceWith(makeGeneratedCover(book, i));
+        img.src = book.cover;
+        cover.appendChild(img);
+        return cover;
+      }
+      return makeGeneratedCover(book, i);
+    }
+
+    function metaRow(label, value) {
+      const row = makeEl("div", "meta");
+      row.appendChild(makeEl("span", "tag", label));
+      row.appendChild(makeEl("span", "", value || "정보 없음"));
+      return row;
+    }
+
+    function renderBook(book, i) {
+      const card = makeEl("article", "book");
+      card.style.animationDelay = (i * 0.07) + "s";
+
+      const wrap = makeEl("div", "cover-wrap");
+      wrap.style.background = PALETTE[i % PALETTE.length][0];
+      wrap.appendChild(makeCover(book, i));
+
+      const info = makeEl("div", "info");
+      info.appendChild(makeEl("h3", "", book.title || "제목 없음"));
+      info.appendChild(metaRow("저자", book.author));
+      info.appendChild(metaRow("출판사", book.publisher));
+      info.appendChild(makeEl("p", "summary", book.summary || "줄거리 정보가 없어요."));
+
+      card.appendChild(wrap);
+      card.appendChild(info);
+      return card;
+    }
+
+    // ----- 검색 -----
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const keyword = input.value.trim();
+      if (!keyword || searchBtn.disabled) return;
+
+      noticeEl.classList.add("hidden");
+      setStatus("코난이 단서를 찾는 중이에요...", false, true);
+      showSkeleton();
+      searchBtn.disabled = true;
+
+      try {
+        const res = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ keyword })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || "검색 중 문제가 생겼어요.");
+
+        resultsEl.innerHTML = "";
+        const books = Array.isArray(data.books) ? data.books : [];
+        if (books.length === 0) {
+          setStatus(data.aiNote || "앗, 관련 그림책을 찾지 못했어요. 다른 키워드로 다시 해볼까요?");
+          return;
+        }
+
+        setStatus("");
+        // 서버가 문구를 안 보내도 항상 안내가 보이도록 기본 문구를 사용
+        noticeText.textContent = data.aiNote || DEFAULT_NOTICE;
+        noticeEl.classList.remove("hidden");
+        books.forEach((b, i) => resultsEl.appendChild(renderBook(b, i)));
+      } catch (err) {
+        resultsEl.innerHTML = "";
+        setStatus("😢 " + err.message, true);
+      } finally {
+        searchBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
