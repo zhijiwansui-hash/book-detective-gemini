@@ -2,7 +2,7 @@
 // 환경변수: GEMINI_API_KEY 하나만 필요
 // 도서관 데이터 없이 Gemini가 직접 그림책을 추천함 → 실제로 없는 책이 섞일 수 있음
 
-const GEMINI_MODEL = "gemini-3.1-flash-lite";
+const GEMINI_MODEL = "gemini-3.5-flash-lite";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 const MAX_RESULTS = 5;
 
